@@ -1,0 +1,176 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: |
+  CloudFormation template for creating the infrastructure needed for
+  the high-availability Web App project of the cloud devops nanodegree.
+
+  use --capabilities CAPABILITY_NAMED_IAM when creating the stack using the aws cli.
+
+Parameters:
+
+  EnvironmentName:
+    Description: Environment Name
+    Type: String
+    Default: development
+    AllowedValues:
+      - development
+      - test
+      - production
+
+  VpcCIDR:
+    Description: IP-Range 
+    Type: String
+    Default: 10.0.0.0/16
+
+  Subnet1CIDR:
+    Description: IP-Range 
+    Type: String
+    Default: 10.0.1.0/24
+
+  Subnet2CIDR:
+    Description: IP-Range 
+    Type: String
+    Default: 10.0.2.0/24
+
+Resources:
+
+  WebAppVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+        CidrBlock: !Ref VpcCIDR
+        EnableDnsHostnames: true
+        Tags: 
+           - Key: Name 
+             Value: !Sub 'VPC-${EnvironmentName}-WebApp'   
+
+  IPGateway:
+    Type: AWS::EC2::InternetGateway
+  IPGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref WebAppVPC
+      InternetGatewayId: !Ref IPGateway
+
+  WebServerSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref WebAppVPC
+      CidrBlock: !Ref Subnet1CIDR
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      MapPublicIpOnLaunch: true
+      Tags: 
+        - Key: Name 
+          Value: !Sub ${EnvironmentName} Subnet (AZ1)
+
+  WebserverSubnetRoutTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref WebAppVPC
+      Tags:
+        - Key: Name
+          Value: !Sub ${EnvironmentName} WebServer Subnet-RouteTable 
+
+  DefaultPublicRoute: 
+      Type: AWS::EC2::Route
+      Properties: 
+          RouteTableId: !Ref WebserverSubnetRoutTable
+          DestinationCidrBlock: 0.0.0.0/0
+          GatewayId: !Ref IPGateway
+
+  RouteTableAssoc1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref WebServerSubnet1
+      RouteTableId: !Ref WebserverSubnetRoutTable
+
+  WebServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: allow access via http port 80
+      VpcId: !Ref WebAppVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp              # FixMe
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+  UdacityS3ReadOnlyEC2:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: UdacityS3ReadOnlyEC2
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: "Allow"
+            Principal:
+              Service:
+                - "ec2.amazonaws.com"
+            Action:
+              - "sts:AssumeRole"
+      Policies:
+        - PolicyName: "S3ReadOnlyAccess"
+          PolicyDocument: 
+            Version: "2012-10-17"
+            Statement:
+              - Effect: "Allow"
+                Action:
+                  - "s3:GetObject"
+                Resource: "*"
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties: 
+      Roles:
+        - !Ref UdacityS3ReadOnlyEC2
+
+  ApacheInstance1:
+    Type: AWS::EC2::Instance
+    Properties:
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+      ImageId: ami-0b418580298265d5c
+      InstanceType: t3.small
+      KeyName: nano-degree-key
+      NetworkInterfaces:
+        - DeviceIndex: '0'
+          AssociatePublicIpAddress: true
+          SubnetId: !Ref WebServerSubnet1
+          GroupSet:
+            - !Ref WebServerSecurityGroup      
+      IamInstanceProfile : !Ref InstanceProfile
+      UserData: !Base64 |
+          #!/bin/bash -xe
+          exec > >(tee /home/ubuntu/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
+          apt-get update -y
+          apt-get install unzip awscli -y
+          apt-get install apache2 -y
+          systemctl start apache2.service
+          cd /var/www/html
+          aws s3 cp s3://udacity-demo-1/udacity.zip .
+          unzip -o udacity.zip
+      Tags: 
+        - Key: Name 
+          Value: !Sub ${EnvironmentName} WebServer Instance (AZ1)
+
+
+
+#instace profile contains the IAM Role name(s) that we want to associate to our auto scaling EC2 Servers
+#  ProfileWithRolesForOurApp:
+#    Type: AWS::IAM::InstanceProfile
+#    Properties: 
+#      Roles:
+##        - UdacityS3ReadOnlyEC2
+#  
+#          #!/bin/bash
+#          apt-get update -y
+#          apt-get install unzip awscli -y
+#          apt-get install apache2 -y
+#          systemctl start apache2.service
+#          cd /var/www/html
+#          aws s3 cp s3://udacity-demo-1/udacity.zip .
+#          unzip -o udacity.zip
+#  Outputs: 
+#  #Bonus points for useful outputs!
