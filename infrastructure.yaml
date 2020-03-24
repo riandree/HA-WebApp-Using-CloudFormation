@@ -51,6 +51,8 @@ Resources:
       VpcId: !Ref WebAppVPC
       InternetGatewayId: !Ref IPGateway
 
+# ------------ Subnets
+
   WebServerSubnet1:
     Type: AWS::EC2::Subnet
     Properties:
@@ -61,6 +63,20 @@ Resources:
       Tags: 
         - Key: Name 
           Value: !Sub ${EnvironmentName} Subnet (AZ1)
+
+
+  WebServerSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref WebAppVPC
+      CidrBlock: !Ref Subnet2CIDR
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      MapPublicIpOnLaunch: true
+      Tags: 
+        - Key: Name 
+          Value: !Sub ${EnvironmentName} Subnet (AZ2)
+
+# ------------ Routing
 
   WebserverSubnetRoutTable:
     Type: AWS::EC2::RouteTable
@@ -83,6 +99,14 @@ Resources:
       SubnetId: !Ref WebServerSubnet1
       RouteTableId: !Ref WebserverSubnetRoutTable
 
+  RouteTableAssoc2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref WebServerSubnet2
+      RouteTableId: !Ref WebserverSubnetRoutTable
+
+# ------------ Network Security
+
   WebServerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -97,6 +121,8 @@ Resources:
           FromPort: 22
           ToPort: 22
           CidrIp: 0.0.0.0/0
+
+# ------------- IAM
 
   UdacityS3ReadOnlyEC2:
     Type: AWS::IAM::Role
@@ -127,20 +153,39 @@ Resources:
       Roles:
         - !Ref UdacityS3ReadOnlyEC2
 
-  ApacheInstance1:
-    Type: AWS::EC2::Instance
-    Properties:
-      AvailabilityZone: !Select [ 0, !GetAZs '' ]
+# ------------- Autoscaling / EC2 Instances
+
+  WebServerAutoScaling:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties: 
+      AutoScalingGroupName: WebServerAutoscaling
+      AvailabilityZones: 
+        - !Select [ 0, !GetAZs '' ]
+        - !Select [ 1, !GetAZs '' ]
+      # HealthCheckGracePeriod: Integer
+      # HealthCheckType: String
+      LaunchConfigurationName: !Ref WebServerLauchConfig
+      # LoadBalancerNames: 
+      # - String
+      MaxSize: 3
+      MinSize: 2
+      #Tags: 
+      #  - TagProperty
+      # TargetGroupARNs: 
+      # - String
+      VPCZoneIdentifier: 
+        - !Ref WebServerSubnet1
+        - !Ref WebServerSubnet2
+  
+  WebServerLauchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties: 
+      IamInstanceProfile : !Ref InstanceProfile
       ImageId: ami-0b418580298265d5c
       InstanceType: t3.small
-      KeyName: nano-degree-key
-      NetworkInterfaces:
-        - DeviceIndex: '0'
-          AssociatePublicIpAddress: true
-          SubnetId: !Ref WebServerSubnet1
-          GroupSet:
-            - !Ref WebServerSecurityGroup      
-      IamInstanceProfile : !Ref InstanceProfile
+      LaunchConfigurationName: WebServerLaunchConfig
+      SecurityGroups: 
+        - !Ref WebServerSecurityGroup
       UserData: !Base64 |
           #!/bin/bash -xe
           exec > >(tee /home/ubuntu/user-data.log|logger -t user-data -s 2>/dev/console) 2>&1
@@ -151,26 +196,3 @@ Resources:
           cd /var/www/html
           aws s3 cp s3://udacity-demo-1/udacity.zip .
           unzip -o udacity.zip
-      Tags: 
-        - Key: Name 
-          Value: !Sub ${EnvironmentName} WebServer Instance (AZ1)
-
-
-
-#instace profile contains the IAM Role name(s) that we want to associate to our auto scaling EC2 Servers
-#  ProfileWithRolesForOurApp:
-#    Type: AWS::IAM::InstanceProfile
-#    Properties: 
-#      Roles:
-##        - UdacityS3ReadOnlyEC2
-#  
-#          #!/bin/bash
-#          apt-get update -y
-#          apt-get install unzip awscli -y
-#          apt-get install apache2 -y
-#          systemctl start apache2.service
-#          cd /var/www/html
-#          aws s3 cp s3://udacity-demo-1/udacity.zip .
-#          unzip -o udacity.zip
-#  Outputs: 
-#  #Bonus points for useful outputs!
