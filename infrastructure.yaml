@@ -122,6 +122,22 @@ Resources:
           ToPort: 22
           CidrIp: 0.0.0.0/0
 
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: allows access to ELB and from ELB to WebServers
+      VpcId: !Ref WebAppVPC
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: "0.0.0.0/0"
+      SecurityGroupIngress:
+        - IpProtocol: "tcp"
+          FromPort: 80
+          ToPort: 80
+          CidrIp: "0.0.0.0/0"
+      
 # ------------- IAM
 
   UdacityS3ReadOnlyEC2:
@@ -171,8 +187,8 @@ Resources:
       MinSize: 2
       #Tags: 
       #  - TagProperty
-      # TargetGroupARNs: 
-      # - String
+      TargetGroupARNs: 
+        - !Ref WebTargetGroup
       VPCZoneIdentifier: 
         - !Ref WebServerSubnet1
         - !Ref WebServerSubnet2
@@ -196,3 +212,56 @@ Resources:
           cd /var/www/html
           aws s3 cp s3://udacity-demo-1/udacity.zip .
           unzip -o udacity.zip
+
+# ------------- Load Balancing
+
+  WebLoadBalancer:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties: 
+      Name: WebLoadBalancer 
+      Type: application
+      SecurityGroups: 
+       - !Ref LoadBalancerSecurityGroup
+      Subnets: 
+        - !Ref WebServerSubnet1
+        - !Ref WebServerSubnet2
+      Tags: 
+        - Key: Name 
+          Value: !Sub 'ELB-${EnvironmentName}' 
+
+  HTTPlistener:
+   Type: AWS::ElasticLoadBalancingV2::Listener
+   Properties:
+     DefaultActions:
+       - Type: fixed-response 
+         FixedResponseConfig:
+           ContentType: text/plain
+           MessageBody: "sorry ... the resource you requested could not be found."
+           StatusCode: 404
+     LoadBalancerArn: !Ref WebLoadBalancer
+     Port: 80
+     Protocol: HTTP
+ 
+  HttpListenerRule1:
+    Type: AWS::ElasticLoadBalancingV2::ListenerRule
+    Properties:
+      Actions:
+        - Type: forward
+          TargetGroupArn: !Ref WebTargetGroup
+      Conditions:
+        - Field: path-pattern
+          Values: [ "/*" ]
+      ListenerArn: !Ref HTTPlistener
+      Priority: 1
+
+  WebTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties: 
+      HealthCheckEnabled: true      
+      Name: WegTargetGroup
+      Port: 80
+      Protocol: HTTP
+      VpcId: !Ref WebAppVPC
+      Tags: 
+        - Key: Name 
+          Value: !Sub 'ELB-TargetGroup-${EnvironmentName}' 
