@@ -1,2 +1,4 @@
-# HA-WebApp-Using-CloudFormation
-Cloud DevOps Engineer Nanodegree Program - Deploy a highly available Web-App using CloudFormation
+# Bertelsmann Technology Scholarship - Udacity 'Cloud DevOps Engineer' Nanodegree
+
+## Assignment for Project 2 - Deploy a high-availability web app using CloudFormation
+
