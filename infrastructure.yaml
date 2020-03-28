@@ -32,7 +32,39 @@ Parameters:
     Type: String
     Default: 10.0.2.0/24
 
+  PublicSubnet1CIDR:
+    Description: IP-Range 
+    Type: String
+    Default: 10.0.3.0/24
+
+  PublicSubnet2CIDR:
+    Description: IP-Range 
+    Type: String
+    Default: 10.0.4.0/24
+
+  WebServerEC2AMI:
+    Description: IP-Range 
+    Type: String
+    Default: 10.0.2.0/24
+
+  WebServerEC3InstanceType: 
+    Type: String
+    Default: t3.small
+    AllowedValues: 
+      - t3.small
+      - t3.medium
+      - t3.large
+    Description: Instance type to use for the web server ec2 instances (t3.small, t3.medium or t3.large)
+
+Outputs:
+
+  ELBDNSName:
+    Description: The DNS name of the LoadBalancer providing access to the web application.
+    Value: !Sub http://${WebLoadBalancer.DNSName}‚
+
 Resources:
+
+# ------------ Virtual Private Network
 
   WebAppVPC:
     Type: AWS::EC2::VPC
@@ -41,17 +73,40 @@ Resources:
         EnableDnsHostnames: true
         Tags: 
            - Key: Name 
-             Value: !Sub 'VPC-${EnvironmentName}-WebApp'   
+             Value: !Sub 'Udagram-${EnvironmentName}-WebApp'   
+           - Key: Env
+             Value: !Sub ${EnvironmentName}
 
   IPGateway:
     Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags: 
+         - Key: Name 
+           Value: !Sub 'Udagram-${EnvironmentName}-IPGateway'   
+         - Key: Env
+           Value: !Sub ${EnvironmentName}
+
   IPGatewayAttachment:
     Type: AWS::EC2::VPCGatewayAttachment
     Properties:
       VpcId: !Ref WebAppVPC
       InternetGatewayId: !Ref IPGateway
 
-# ------------ Subnets
+  EIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt EIP.AllocationId
+      SubnetId: !Ref PublicSubnet1
+
+# ------------ Subnets within VPC
+
+
+# private subnets for the apache web-servers
 
   WebServerSubnet1:
     Type: AWS::EC2::Subnet
@@ -59,11 +114,12 @@ Resources:
       VpcId: !Ref WebAppVPC
       CidrBlock: !Ref Subnet1CIDR
       AvailabilityZone: !Select [ 0, !GetAZs '' ]
-      MapPublicIpOnLaunch: true
+      MapPublicIpOnLaunch: false
       Tags: 
         - Key: Name 
-          Value: !Sub ${EnvironmentName} Subnet (AZ1)
-
+          Value: !Sub Udagram (${EnvironmentName}) private Subnet (AZ1)
+        - Key: Env
+          Value: !Sub ${EnvironmentName}
 
   WebServerSubnet2:
     Type: AWS::EC2::Subnet
@@ -71,72 +127,148 @@ Resources:
       VpcId: !Ref WebAppVPC
       CidrBlock: !Ref Subnet2CIDR
       AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      MapPublicIpOnLaunch: false
+      Tags: 
+        - Key: Name 
+          Value: !Sub Udagram (${EnvironmentName}) private Subnet (AZ2)
+        - Key: Env
+          Value: !Sub ${EnvironmentName}
+
+# public subnets for the load balancer nodes
+
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref WebAppVPC
+      CidrBlock: !Ref PublicSubnet1CIDR
+      AvailabilityZone: !Select [ 0, !GetAZs '' ]
       MapPublicIpOnLaunch: true
       Tags: 
         - Key: Name 
-          Value: !Sub ${EnvironmentName} Subnet (AZ2)
+          Value: !Sub Udagram (${EnvironmentName}) public Subnet (AZ1)
+        - Key: Env
+          Value: !Sub ${EnvironmentName}
+
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref WebAppVPC
+      CidrBlock: !Ref PublicSubnet2CIDR
+      AvailabilityZone: !Select [ 1, !GetAZs '' ]
+      MapPublicIpOnLaunch: true
+      Tags: 
+        - Key: Name 
+          Value: !Sub Udagram (${EnvironmentName}) public Subnet (AZ2)
+        - Key: Env
+          Value: !Sub ${EnvironmentName}
 
 # ------------ Routing
 
-  WebserverSubnetRoutTable:
+  WebserverSubnetRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref WebAppVPC
       Tags:
         - Key: Name
-          Value: !Sub ${EnvironmentName} WebServer Subnet-RouteTable 
+          Value: !Sub Udagram (${EnvironmentName}) WebServer Subnet-RouteTable 
+        - Key: Env
+          Value: !Sub ${EnvironmentName}
+
+  DefaultPrivateNatRoute: 
+      Type: AWS::EC2::Route
+      Properties: 
+          RouteTableId: !Ref WebserverSubnetRouteTable
+          DestinationCidrBlock: 0.0.0.0/0   
+          NatGatewayId: !Ref NatGateway        
+
+  WebServerRouteTableAssoc1:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref WebServerSubnet1
+      RouteTableId: !Ref WebserverSubnetRouteTable
+
+  WebServerRouteTableAssoc2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref WebServerSubnet2
+      RouteTableId: !Ref WebserverSubnetRouteTable
+
+  PublicSubnetRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref WebAppVPC
+      Tags:
+        - Key: Name
+          Value: !Sub Udagram (${EnvironmentName}) public Subnet-RouteTable 
+        - Key: Env
+          Value: !Sub ${EnvironmentName}
 
   DefaultPublicRoute: 
       Type: AWS::EC2::Route
       Properties: 
-          RouteTableId: !Ref WebserverSubnetRoutTable
+          RouteTableId: !Ref PublicSubnetRouteTable
           DestinationCidrBlock: 0.0.0.0/0
           GatewayId: !Ref IPGateway
 
   RouteTableAssoc1:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
-      SubnetId: !Ref WebServerSubnet1
-      RouteTableId: !Ref WebserverSubnetRoutTable
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicSubnetRouteTable
 
   RouteTableAssoc2:
     Type: AWS::EC2::SubnetRouteTableAssociation
     Properties:
-      SubnetId: !Ref WebServerSubnet2
-      RouteTableId: !Ref WebserverSubnetRoutTable
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicSubnetRouteTable
 
 # ------------ Network Security
 
   WebServerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: allow access via http port 80
+      GroupDescription: allow access to webservers from within vpc via http port 80
       VpcId: !Ref WebAppVPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 80
           ToPort: 80
+          CidrIp: !Ref VpcCIDR
+      SecurityGroupEgress:   # We need this egress in order for the Webservers to be able to
+        - IpProtocol: "tcp"  # use apt to install the software-packages (Port 80) needed and to use aws cli to
+          FromPort: 80       # download the website contents from s3 (Port 443)
+          ToPort: 80      
           CidrIp: 0.0.0.0/0
-        - IpProtocol: tcp              # FixMe
-          FromPort: 22
-          ToPort: 22
+        - IpProtocol: "tcp"  
+          FromPort: 443        
+          ToPort: 443      
           CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub Udagram (${EnvironmentName}) Apache Sec Group
+        - Key: Env
+          Value: !Sub ${EnvironmentName}
 
   LoadBalancerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: allows access to ELB and from ELB to WebServers
+      GroupDescription: allows access to ELB from everywhere and from ELB to WebServers
       VpcId: !Ref WebAppVPC
       SecurityGroupEgress:
-        - IpProtocol: tcp
+        - IpProtocol: "tcp"
           FromPort: 80
           ToPort: 80
-          CidrIp: "0.0.0.0/0"
+          DestinationSecurityGroupId: !Ref WebServerSecurityGroup
       SecurityGroupIngress:
         - IpProtocol: "tcp"
           FromPort: 80
           ToPort: 80
           CidrIp: "0.0.0.0/0"
+      Tags:
+        - Key: Name
+          Value: !Sub Udagram (${EnvironmentName}) ELB Sec Group
+        - Key: Env
+          Value: !Sub ${EnvironmentName}
       
 # ------------- IAM
 
@@ -162,6 +294,11 @@ Resources:
                 Action:
                   - "s3:GetObject"
                 Resource: "*"
+      Tags:
+        - Key: Name
+          Value: !Sub Udagram${EnvironmentName}S3ROAccessRole
+        - Key: Env
+          Value: !Sub ${EnvironmentName}
 
   InstanceProfile:
     Type: AWS::IAM::InstanceProfile
@@ -173,32 +310,38 @@ Resources:
 
   WebServerAutoScaling:
     Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn: NatGateway
     Properties: 
       AutoScalingGroupName: WebServerAutoscaling
       AvailabilityZones: 
         - !Select [ 0, !GetAZs '' ]
         - !Select [ 1, !GetAZs '' ]
-      # HealthCheckGracePeriod: Integer
-      # HealthCheckType: String
       LaunchConfigurationName: !Ref WebServerLauchConfig
-      # LoadBalancerNames: 
-      # - String
       MaxSize: 3
       MinSize: 2
-      #Tags: 
-      #  - TagProperty
       TargetGroupARNs: 
         - !Ref WebTargetGroup
       VPCZoneIdentifier: 
         - !Ref WebServerSubnet1
         - !Ref WebServerSubnet2
-  
+      Tags:
+        - Key: Name
+          PropagateAtLaunch: false
+          Value: !Sub Udagram (${EnvironmentName}) autoscaling group
+        - Key: Env
+          PropagateAtLaunch: true
+          Value: !Sub ${EnvironmentName}
+   
   WebServerLauchConfig:
     Type: AWS::AutoScaling::LaunchConfiguration
     Properties: 
       IamInstanceProfile : !Ref InstanceProfile
-      ImageId: ami-0b418580298265d5c
-      InstanceType: t3.small
+      ImageId: ami-0b418580298265d5c                    # Canonical, Ubuntu, 18.04 LTS, amd64 bionic image build on 2020-01-12
+      InstanceType: !Ref WebServerEC3InstanceType
+      BlockDeviceMappings:
+        - DeviceName: "/dev/sda1"
+          Ebs:
+            VolumeSize: 10
       LaunchConfigurationName: WebServerLaunchConfig
       SecurityGroups: 
         - !Ref WebServerSecurityGroup
@@ -223,11 +366,13 @@ Resources:
       SecurityGroups: 
        - !Ref LoadBalancerSecurityGroup
       Subnets: 
-        - !Ref WebServerSubnet1
-        - !Ref WebServerSubnet2
+        - !Ref PublicSubnet1
+        - !Ref PublicSubnet2
       Tags: 
         - Key: Name 
           Value: !Sub 'ELB-${EnvironmentName}' 
+        - Key: Env
+          Value: !Sub ${EnvironmentName}
 
   HTTPlistener:
    Type: AWS::ElasticLoadBalancingV2::Listener
@@ -257,11 +402,22 @@ Resources:
   WebTargetGroup:
     Type: AWS::ElasticLoadBalancingV2::TargetGroup
     Properties: 
-      HealthCheckEnabled: true      
       Name: WegTargetGroup
       Port: 80
       Protocol: HTTP
       VpcId: !Ref WebAppVPC
+      HealthCheckEnabled: true      
+      HealthCheckIntervalSeconds : 10
+      HealthCheckPath : "/"
+      HealthCheckPort : "80"
+      HealthCheckProtocol : HTTP
+      HealthCheckTimeoutSeconds : 4
+      HealthyThresholdCount : 2
+      UnhealthyThresholdCount : 2
+      Matcher:
+        HttpCode: 200
       Tags: 
         - Key: Name 
           Value: !Sub 'ELB-TargetGroup-${EnvironmentName}' 
+        - Key: Env
+          Value: !Sub ${EnvironmentName}
